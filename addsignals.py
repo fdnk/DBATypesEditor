@@ -1,5 +1,6 @@
 #!/usr/bin/python3
-import xml.etree.ElementTree as ET
+#import xml.etree.ElementTree as ET
+from lxml import etree as ET
 import sys
 import csv
 from datetime import datetime
@@ -22,8 +23,8 @@ def addsignals(xmltypes_tree, xmltemplates_tree, csvdata):
     valid_types = list(map(lambda x: x.attrib['type'], xmltemplates_root))
 
     # Obtengo los placeholds a reemplazar, que empiecen con REPLACE_
-    placeholds = [x for x in csvdata.fieldnames if "REPLACE_" in x]
-    print('Placeholds a reemplazar: ', placeholds)
+    # placeholds = [x for x in csvdata.fieldnames if "REPLACE_" in x]
+    # print('Placeholds a reemplazar: ', placeholds)
 
     # Procesamiento de los datos del CSV
     for i, reg in enumerate(csvdata):
@@ -39,18 +40,23 @@ def addsignals(xmltypes_tree, xmltemplates_tree, csvdata):
         except ValueError as e:
             raise ValueError(f"No se encuentra el tipo '{tipo}' en el template xml. Linea {i} del CSV.") from e
         
-        template_str = ET.tostring(xmltemplates_root[nchild], encoding='unicode')
+        # Obtengo los placeholds correspondientes a este tipo
+        template = xmltemplates_root[nchild]
+        placeholds = template.attrib['placeholds'].split(' ')
 
-        # Cambio lo que tengo que cambiar.
+        template_str = ET.tostring(template, encoding='unicode')
+        
+        ## Reemplazo de placeholds
         # Es importante realizar los remplazos comenzando con los placeholds
         # más largos y seguir por los más cortos
-        for replace_text in sorted(placeholds, key=len, reverse=True):
-            template_str = template_str.replace(replace_text, reg[replace_text])
+        for phold in sorted(placeholds, key=len, reverse=True):
+            try:
+                new_text = reg[phold]
+            except ValueError as e:
+                raise ValueError(f"No se encuentra el campo '{phold}' en el CSV para reemplazar en el template {tipo}. Linea {i} del CSV.") from e
+            
+            template_str = template_str.replace(phold, new_text)
         
-        # Chequeo que no haya más REPLACE_
-        if "REPLACE_" in template_str:
-            print("Advertencia: Reemplazo incompleto en tipo ", tipo, "\n\t", str(reg))
-
         new_elem = ET.fromstring(template_str)
         
         # Agrego cada uno de los tags dentro del documento principal (ojo! los hijos nomas)
@@ -89,7 +95,7 @@ if __name__ == '__main__':
     """
 
     print(prog_help)
-    
+
     xmltypes_path = input('Arrastre el archivo con los tipos a modificar (XML): ')
     xmltemplates_path = input('Arrastre archivo de templates o presione ENTER para usar por defecto templates.xml: ')
     csvdata_path = input('Arrastre el archivo CSV con las señales a agregar: ')
@@ -102,8 +108,9 @@ if __name__ == '__main__':
         outfile_path = "out.xml"
 
     # Abro archivos
-    xmltypes_tree = ET.parse(xmltypes_path.strip('"'))
-    xmltemplates_tree = ET.parse(xmltemplates_path.strip('"'))
+    parserxml = ET.XMLParser(strip_cdata=False) # Para que no elimine los CDATA
+    xmltypes_tree = ET.parse(xmltypes_path.strip('"'), parserxml)
+    xmltemplates_tree = ET.parse(xmltemplates_path.strip('"'), parserxml)
     csvdata = parseCSV(csvdata_path.strip('"'))
 
     # Proceso
