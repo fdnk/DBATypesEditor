@@ -10,6 +10,8 @@ import logging
 import os.path
 import sys, traceback
 
+import click
+
 def resource_path(relative_path):
     """ Get absolute path to resource, works for dev and for PyInstaller """
     try:
@@ -148,14 +150,37 @@ class Application(ttk.Frame):
         logging.info("Terminado exitosamente")
 
 
+@click.command()
+@click.option("--mainXML", "-m", "mainXML", required=True,
+    help="Archivo con el archivo a editar",
+)
+@click.option("--templateXML", "-t", "templateXML", required=True,
+    help="Archivo XML con los templates")
+@click.option("--csv", "-c", "csv", required=True,
+    help="CSV con las variables a agregar")
+@click.option("--outXML", "-o", "outXML", required=True,
+    help="Archivo de salida")
+def process_cli(mainXML, templateXML, csv, outXML):
+    """ Procesamiento por CLI
+    """
+    addsignals.processFiles(xmltypes_path=mainXML, xmltemplates_path=templateXML, csvdata_path=csv, outfile_path=outXML)
+
 if __name__ == '__main__':
-    main_window = tk.Tk()
-    app = Application(main_window)
-    logging.basicConfig(stream=app.console, level=logging.INFO, format='%(levelname)s :: %(message)s')
+    if len(sys.argv)>1:
+        # Modo consola
+        logging.basicConfig(level=logging.INFO, format='%(levelname)s :: %(message)s')
+        process_cli()
+    else:
+        # Modo GUI
+        main_window = tk.Tk()
+        app = Application(main_window)
+        logging.basicConfig(stream=app.console, level=logging.INFO, format='%(levelname)s :: %(message)s')
 
-    default_template = resource_path('templates.xml')
+        default_template = resource_path('templates.xml')
 
-    if os.path.exists(default_template):
-        app.templatesXMLPicker.setpath(os.path.abspath(default_template))
+        if os.path.exists(default_template):
+            app.templatesXMLPicker.setpath(os.path.abspath(default_template))
 
-    app.mainloop()
+        app.mainloop()
+    
+    sys.exit(0)

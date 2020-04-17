@@ -5,11 +5,13 @@ import sys
 import csv
 from datetime import datetime
 import logging
+import re
 
+######## SUPER TO-DO: Romper esta funcion espagueti en pedacitos
 def addsignals(xmltypes_tree, xmltemplates_tree, csvdata):
     ## Proceso el XML con los tipicos
     xmltypes_root = xmltypes_tree.getroot()
-    print("Fecha de creación del XML:",xmltypes_root.attrib['Date'])
+    logging.info("Fecha de creación del XML: "+ xmltypes_root.attrib['Date'])
 
     # Obtengo los nombres de cada elemento del documento
     #childs = list(map(lambda x: x.attrib['Na'], root))
@@ -17,17 +19,28 @@ def addsignals(xmltypes_tree, xmltemplates_tree, csvdata):
         raise NotImplementedError('Se encontró más de un tipo en el archivo xml. Exporte solo uno.')
     
     mytypical = xmltypes_root[0]
-    print("Editando el típico:", mytypical.attrib['Na'])
+    logging.info("Editando el típico: " + mytypical.attrib['Na'])
 
-    # Listo los templates
+    ## Procesamiento templates XML
     xmltemplates_root = xmltemplates_tree.getroot()
-    valid_types = list(map(lambda x: x.attrib['type'], xmltemplates_root))
 
-    # Obtengo los placeholds a reemplazar, que empiecen con REPLACE_
-    # placeholds = [x for x in csvdata.fieldnames if "REPLACE_" in x]
-    # print('Placeholds a reemplazar: ', placeholds)
+    # Armo un diccionario con el tempate para cada tipo
+    try:
+        templates = {x.attrib['type']: {
+        'placeholds': x.attrib['placeholds'].split(' '),
+        'tree': x
+        } for x in xmltemplates_root.find("signals")
+        }
+    except KeyError as e:
+        raise KeyError("XML de templates malformado") from e
+    
+    # Armo un diccionario con las expresiones regulares
+    rules_placeholds = {x.attrib['name']: {
+    'regex': re.compile(x.text.strip()),
+    'description': x.attrib['description'] if 'description' in x.attrib else ''
+    } for x in xmltemplates_root.find("rules")}
 
-    # Procesamiento de los datos del CSV
+    ## Procesamiento de los datos del CSV, linea por linea
     for i, reg in enumerate(csvdata):
         # Busco el tipo que dice el CSV dentro del xml con templates
         tipo = reg['type']
@@ -35,31 +48,46 @@ def addsignals(xmltypes_tree, xmltemplates_tree, csvdata):
         if len(tipo)<1:
             print(f"Se omite tipo vacío en linea {i} del CSV.")
             continue
-
-        try:
-            nchild = valid_types.index(tipo)
-        except ValueError as e:
-            raise ValueError(f"No se encuentra el tipo '{tipo}' en el template xml. Linea {i} del CSV.") from e
         
-        # Obtengo los placeholds correspondientes a este tipo
-        template = xmltemplates_root[nchild]
-        placeholds = template.attrib['placeholds'].split(' ')
+        if len(tipo)<1:
+            print(f"Se omite tipo vacío en linea {i} del CSV.")
+            continue
+        
+        # Chequeo que el tipico exista
+        if not tipo in templates:
+            raise ValueError(f"No se encuentra el tipo '{tipo}' en el template xml. Linea {i} del CSV.")
+        
 
-        template_str = ET.tostring(template, encoding='unicode')
+        # Obtengo los placeholds correspondientes a este tipo
+        template = templates[tipo]
+        placeholds = template['placeholds']
+
+        template_str = ET.tostring(template['tree'], encoding='unicode')
         
         ## Reemplazo de placeholds
         # Es importante realizar los remplazos comenzando con los placeholds
         # más largos y seguir por los más cortos
         for phold in sorted(placeholds, key=len, reverse=True):
             try:
-                new_text = reg[phold]
+                new_text = reg[phold].strip()
             except ValueError as e:
-                raise ValueError(f"No se encuentra el campo '{phold}' en el CSV para reemplazar en el template {tipo}. Linea {i} del CSV.") from e
-            
+                raise ValueError(f"Linea {i} del CSV: No se encuentra el campo '{phold}' para reemplazar en el template {tipo}.") from e
+
+            if len(new_text)==0:
+                logging.warning(f"Linea {i} del CSV: El campo '{phold}' se encuentra vacío pero es requerido por el template {tipo}.")
+
+            if phold in rules_placeholds:
+                regex = rules_placeholds[phold]['regex']
+                regex_description = rules_placeholds[phold]['description']
+                # Realizo la busqueda
+                if not regex.search(new_text):
+                    raise KeyError(f"Linea {i} del CSV: El placehold {phold}='{new_text}' no cumple la regla establecida: '{regex_description}'.")
+
             template_str = template_str.replace(phold, new_text)
         
         new_elem = ET.fromstring(template_str)
         
+        ######### REFACTORIZAR: Utilizar el atributo unique del xml
         # Reviso que no haya colisiones de nombres
         tagsNew,msgNew = findNames(new_elem)
         tagsMain, msgMain = findNames(mytypical)
@@ -69,9 +97,9 @@ def addsignals(xmltypes_tree, xmltemplates_tree, csvdata):
 
         if len(duplicated_tags) > 0 or len(duplicated_msg)>0:
             if len(duplicated_tags) > 0:
-                logging.warning("Se omiten TAGs existentes: "+", ".join(list(duplicated_tags)) )
+                logging.warning(f"Linea {i} del CSV. Se omiten TAGs existentes: "+", ".join(list(duplicated_tags)) )
             if len(duplicated_msg)>0:
-                logging.warning("Se omiten MSGs existentes: "+", ".join(list(duplicated_msg)) )
+                logging.warning(f"Linea {i} del CSV. Se omiten MSGs existentes: "+", ".join(list(duplicated_msg)) )
             continue
 
         # Agrego cada uno de los tags dentro del documento principal (ojo! los hijos nomas)
